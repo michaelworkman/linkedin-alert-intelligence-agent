@@ -1,0 +1,124 @@
+name: Weekday LinkedIn Digest
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 11 * * 1-5"
+    - cron: "0 12 * * 1-5"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOURCE_MODE: gmail
+      DIGEST_TO_EMAIL: ${{ secrets.DIGEST_TO_EMAIL }}
+      DAILY_SEND_TIME: "7:00 AM"
+      TIMEZONE_NAME: America/New_York
+      GMAIL_QUERY: "from:(jobalerts-noreply@linkedin.com OR jobs-noreply@linkedin.com) newer_than:2d"
+      GMAIL_MAX_RESULTS: "100"
+      GMAIL_MARK_READ: "false"
+      GMAIL_CLIENT_SECRETS_PATH: secrets/google-oauth-client.json
+      GMAIL_TOKEN_PATH: secrets/google-token.json
+      DATABASE_PATH: data/linkedin_alerts.sqlite3
+      OUTPUT_DIR: output
+      FAILED_DIR: output/failed
+      PROFILE_PATH: profile.json
+      PYTHONPATH: src
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_REASONER_ENABLED: ${{ secrets.OPENAI_API_KEY != '' }}
+
+    steps:
+      - name: Check 7 AM Eastern window
+        id: schedule
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run_now=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          local_hour=$(TZ=America/New_York date +%H)
+          local_weekday=$(TZ=America/New_York date +%u)
+
+          if [ "$local_weekday" -gt 5 ] || [ "$local_hour" != "07" ]; then
+            echo "run_now=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping because this is not the 7 AM Eastern weekday window."
+            exit 0
+          fi
+
+          echo "run_now=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        if: steps.schedule.outputs.run_now == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.schedule.outputs.run_now == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify required secrets
+        if: steps.schedule.outputs.run_now == 'true'
+        env:
+          GMAIL_CLIENT_SECRETS_JSON: ${{ secrets.GMAIL_CLIENT_SECRETS_JSON }}
+          GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
+        shell: bash
+        run: |
+          [ -n "$DIGEST_TO_EMAIL" ] || { echo "::error::Missing GitHub secret DIGEST_TO_EMAIL"; exit 1; }
+          [ -n "$GMAIL_CLIENT_SECRETS_JSON" ] || { echo "::error::Missing GitHub secret GMAIL_CLIENT_SECRETS_JSON"; exit 1; }
+          [ -n "$GMAIL_TOKEN_JSON" ] || { echo "::error::Missing GitHub secret GMAIL_TOKEN_JSON"; exit 1; }
+
+      - name: Restore digest state
+        if: steps.schedule.outputs.run_now == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: data/linkedin_alerts.sqlite3
+          key: linkedin-alert-state-${{ github.run_id }}
+          restore-keys: |
+            linkedin-alert-state-
+
+      - name: Install app
+        if: steps.schedule.outputs.run_now == 'true'
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Write Gmail credential files
+        if: steps.schedule.outputs.run_now == 'true'
+        env:
+          GMAIL_CLIENT_SECRETS_JSON: ${{ secrets.GMAIL_CLIENT_SECRETS_JSON }}
+          GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
+        shell: bash
+        run: |
+          mkdir -p secrets data output
+          printf '%s' "$GMAIL_CLIENT_SECRETS_JSON" > "$GMAIL_CLIENT_SECRETS_PATH"
+          printf '%s' "$GMAIL_TOKEN_JSON" > "$GMAIL_TOKEN_PATH"
+
+      - name: Send weekday digest
+        if: steps.schedule.outputs.run_now == 'true'
+        shell: bash
+        run: python -m linkedin_alert_agent run
+
+      - name: Upload digest artifact
+        if: steps.schedule.outputs.run_now == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkedin-digest-${{ github.run_id }}
+          path: |
+            output/linkedin-digest-*.html
+            output/failed/**
+          if-no-files-found: ignore
+
+      - name: Save digest state
+        if: steps.schedule.outputs.run_now == 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/linkedin_alerts.sqlite3
+          key: linkedin-alert-state-${{ github.run_id }}

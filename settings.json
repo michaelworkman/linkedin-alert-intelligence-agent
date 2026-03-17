@@ -1,0 +1,8 @@
+{
+  "source_mode": "gmail",
+  "digest_to_email": "michael.w.workman@gmail.com",
+  "daily_send_time": "7:00 AM",
+  "timezone_name": "America/New_York",
+  "gmail_label_names": [],
+  "gmail_mark_read": false
+}

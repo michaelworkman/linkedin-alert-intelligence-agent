@@ -1,0 +1,101 @@
+{
+  "target_titles": [
+    "Creative Director",
+    "Design Director",
+    "Brand Director",
+    "Director of UX",
+    "Director of Experience Design",
+    "Head of Brand",
+    "Experience Design",
+    "Brand Experience"
+  ],
+  "target_locations": [
+    "Boston, MA",
+    "New York, NY",
+    "Remote"
+  ],
+  "remote_ok": true,
+  "preferred_seniority_keywords": [
+    "director",
+    "head",
+    "lead",
+    "manager",
+    "principal"
+  ],
+  "must_have_keywords": [
+    "leadership",
+    "strategy",
+    "brand",
+    "storytelling",
+    "design systems"
+  ],
+  "emphasis_keywords": [
+    "marketing",
+    "product"
+  ],
+  "positive_keywords": [
+    "AI",
+    "creative",
+    "editorial",
+    "digital storytelling",
+    "experience design",
+    "brand systems",
+    "innovation",
+    "mission-driven",
+    "higher education",
+    "media",
+    "UX",
+    "marketing",
+    "product"
+  ],
+  "avoid_keywords": [
+    "junior",
+    "product designer ii",
+    "production design",
+    "sales enablement",
+    "engineering manager",
+    "contract",
+    "temporary",
+    "temp"
+  ],
+  "hard_exclude_keywords": [
+    "architect",
+    "architecture",
+    "engineering",
+    "facilities",
+    "environmental",
+    "ops",
+    "operations",
+    "devops",
+    "security"
+  ],
+  "company_quality_signals": [
+    "design-led",
+    "mission-driven",
+    "higher ed",
+    "civic",
+    "media",
+    "agency",
+    "digital"
+  ],
+  "core_function_keywords": [
+    "design",
+    "brand",
+    "marketing",
+    "product",
+    "ux",
+    "ui",
+    "experience",
+    "editorial",
+    "storytelling",
+    "visual",
+    "content strategy",
+    "art direction",
+    "digital"
+  ],
+  "classification_thresholds": {
+    "top_match": 65,
+    "worth_a_look": 50,
+    "low_priority": 30
+  }
+}
