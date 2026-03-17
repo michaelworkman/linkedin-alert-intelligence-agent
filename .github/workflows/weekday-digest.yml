@@ -29,6 +29,7 @@ jobs:
       FAILED_DIR: output/failed
       PROFILE_PATH: profile.json
       PYTHONPATH: src
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_REASONER_ENABLED: ${{ secrets.OPENAI_API_KEY != '' }}
 
@@ -55,11 +56,11 @@ jobs:
 
       - name: Checkout repository
         if: steps.schedule.outputs.run_now == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
         if: steps.schedule.outputs.run_now == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -76,7 +77,7 @@ jobs:
 
       - name: Restore digest state
         if: steps.schedule.outputs.run_now == 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: data/linkedin_alerts.sqlite3
           key: linkedin-alert-state-${{ github.run_id }}
@@ -108,7 +109,7 @@ jobs:
 
       - name: Upload digest artifact
         if: steps.schedule.outputs.run_now == 'true' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linkedin-digest-${{ github.run_id }}
           path: |
@@ -118,7 +119,7 @@ jobs:
 
       - name: Save digest state
         if: steps.schedule.outputs.run_now == 'true' && always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: data/linkedin_alerts.sqlite3
           key: linkedin-alert-state-${{ github.run_id }}
