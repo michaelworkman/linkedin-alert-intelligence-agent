@@ -7,6 +7,7 @@ This is a Python MVP for turning LinkedIn job alert emails into one ranked daily
 - Filesystem intake for `.eml` files so the pipeline is runnable locally right now.
 - Local Gmail OAuth flow with refresh-token persistence for repeatable daily runs.
 - Gmail API intake using either the saved OAuth token or a one-off bearer token fallback.
+- Durable Gmail checkpointing with a processed label so successful runs skip already-consumed alerts.
 - Email parsing for LinkedIn alert HTML/text into structured job records.
 - Normalization for titles, locations, work mode hints, and canonical job URLs.
 - SQLite persistence for alerts, jobs, scores, and digests.
@@ -48,6 +49,7 @@ export SOURCE_MODE=gmail
 export GMAIL_CLIENT_SECRETS_PATH=secrets/google-oauth-client.json
 export GMAIL_LABEL_NAMES='LinkedIn Alerts'
 export GMAIL_QUERY='from:(jobalerts-noreply@linkedin.com OR jobs-noreply@linkedin.com) newer_than:2d'
+export GMAIL_PROCESSED_LABEL_NAME='LinkedIn Digest Processed'
 PYTHONPATH=src python3 -m linkedin_alert_agent gmail-auth
 PYTHONPATH=src python3 -m linkedin_alert_agent gmail-labels
 PYTHONPATH=src python3 -m linkedin_alert_agent run --dry-run
@@ -59,6 +61,7 @@ Bearer token fallback:
 export SOURCE_MODE=gmail
 export GMAIL_ACCESS_TOKEN=your-oauth-bearer-token
 export GMAIL_QUERY='from:(jobalerts-noreply@linkedin.com OR jobs-noreply@linkedin.com) newer_than:2d'
+export GMAIL_PROCESSED_LABEL_NAME='LinkedIn Digest Processed'
 PYTHONPATH=src python3 -m linkedin_alert_agent run --dry-run
 ```
 
@@ -72,9 +75,11 @@ When you are ready to email the digest, set the SMTP variables from [.env.exampl
 4. Optionally create a Gmail label such as `LinkedIn Alerts` and route LinkedIn alert emails into it.
 5. Run `PYTHONPATH=src python3 -m linkedin_alert_agent gmail-auth`.
 6. Verify labels with `PYTHONPATH=src python3 -m linkedin_alert_agent gmail-labels`.
-7. Run the pipeline with `SOURCE_MODE=gmail`.
+7. Leave `GMAIL_PROCESSED_LABEL_NAME` enabled so the pipeline can checkpoint successfully processed alerts in Gmail.
+8. Run the pipeline with `SOURCE_MODE=gmail`.
 
 If you want the pipeline to mark processed Gmail messages read, set `GMAIL_MARK_READ=true` and re-run `gmail-auth` so the saved token includes `gmail.modify`.
+The processed checkpoint label is the more reliable guardrail for automation because it survives across runs even if your local database cache is rebuilt.
 
 ## Output
 
@@ -108,7 +113,10 @@ What it does:
 
 - runs every weekday at 7:00 AM Eastern
 - also supports a manual "Run workflow" test from GitHub
-- restores the SQLite history file so dedupe and seen-history carry forward between runs
+- tags successfully processed Gmail messages with `LinkedIn Digest Processed`
+- restores the SQLite history file from a dedicated `linkedin-digest-state` branch
+- validates the saved Gmail token before processing so missing send scope fails fast
+- persists the SQLite history back to that state branch after a successful run
 - uploads the rendered digest HTML as a workflow artifact after each run
 
 Before you enable it, push this repo to GitHub and add these repository secrets:
@@ -119,6 +127,7 @@ Before you enable it, push this repo to GitHub and add these repository secrets:
   Paste the full contents of your local [secrets/google-oauth-client.json](/Users/michaelworkman/Desktop/LinkedIn%20job%20search/secrets/google-oauth-client.json)
 - `GMAIL_TOKEN_JSON`
   Paste the full contents of your local [secrets/google-token.json](/Users/michaelworkman/Desktop/LinkedIn%20job%20search/secrets/google-token.json)
+  This token should include `gmail.readonly` plus `gmail.send`, and `gmail.modify` too if you later enable `GMAIL_MARK_READ=true`.
 - `OPENAI_API_KEY`
   Optional. Add this only if you want the optional AI rationale refinement in GitHub too.
 
@@ -128,9 +137,10 @@ After those secrets are added:
 2. Open the `Actions` tab in GitHub.
 3. Open `Weekday LinkedIn Digest`.
 4. Click `Run workflow` once for a live test.
-5. Leave the workflow enabled for weekday 7:00 AM runs.
+5. Confirm the run creates or updates the `linkedin-digest-state` branch.
+6. Leave the workflow enabled for weekday 7:00 AM runs.
 
-One practical note: the workflow keeps the SQLite history in the GitHub Actions cache so dedupe can persist between runs. If that cache is ever cleared by GitHub, the agent will still work, but it will temporarily lose seen-history until it builds the database back up again.
+The workflow no longer relies on the GitHub Actions cache for history. The dedicated `linkedin-digest-state` branch is the durable checkpoint for the SQLite state, while the Gmail processed label protects against re-consuming old alert emails.
 
 ## Tests
 

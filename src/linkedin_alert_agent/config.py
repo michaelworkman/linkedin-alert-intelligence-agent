@@ -32,6 +32,8 @@ class Config:
     gmail_query: str = "from:(jobalerts-noreply@linkedin.com OR jobs-noreply@linkedin.com) newer_than:2d"
     gmail_label_names: list[str] = field(default_factory=list)
     gmail_label_ids: list[str] = field(default_factory=list)
+    gmail_processed_label_name: str = "LinkedIn Digest Processed"
+    gmail_create_processed_label: bool = True
     gmail_max_results: int = 25
     gmail_mark_read: bool = False
     gmail_client_id: str = ""
@@ -71,6 +73,11 @@ class Config:
             ).strip(),
             gmail_label_names=_env_list("GMAIL_LABEL_NAMES"),
             gmail_label_ids=_env_list("GMAIL_LABEL_IDS"),
+            gmail_processed_label_name=os.getenv(
+                "GMAIL_PROCESSED_LABEL_NAME",
+                "LinkedIn Digest Processed",
+            ).strip(),
+            gmail_create_processed_label=_env_bool("GMAIL_CREATE_PROCESSED_LABEL", True),
             gmail_max_results=int(os.getenv("GMAIL_MAX_RESULTS", "25")),
             gmail_mark_read=_env_bool("GMAIL_MARK_READ", False),
             gmail_client_id=os.getenv("GMAIL_CLIENT_ID", "").strip(),

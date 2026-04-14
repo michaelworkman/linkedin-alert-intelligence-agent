@@ -378,6 +378,22 @@ class GmailApiClient:
         payload = self.request_json("GET", "/labels")
         return payload.get("labels", [])
 
+    def create_label(
+        self,
+        name: str,
+        label_list_visibility: str = "labelShow",
+        message_list_visibility: str = "show",
+    ) -> dict:
+        return self.request_json(
+            "POST",
+            "/labels",
+            payload={
+                "name": name,
+                "labelListVisibility": label_list_visibility,
+                "messageListVisibility": message_list_visibility,
+            },
+        )
+
     def send_message(self, raw_message: bytes) -> dict:
         encoded = base64.urlsafe_b64encode(raw_message).decode("utf-8")
         return self.request_json("POST", "/messages/send", payload={"raw": encoded})
@@ -400,6 +416,36 @@ class GmailApiClient:
                 f"Could not find Gmail label(s): {', '.join(missing)}. Use `gmail-labels` to inspect available labels."
             )
         return list(dict.fromkeys(resolved + fallback_label_ids))
+
+    def ensure_label_id(self, label_name: str) -> str:
+        label_name = label_name.strip()
+        if not label_name:
+            raise GmailAuthError("Processed Gmail label name cannot be empty.")
+        labels = self.list_labels()
+        name_to_id = {str(label.get("name", "")).strip().lower(): str(label.get("id", "")).strip() for label in labels}
+        existing = name_to_id.get(label_name.lower())
+        if existing:
+            return existing
+        created = self.create_label(label_name)
+        created_id = str(created.get("id", "")).strip()
+        if not created_id:
+            raise GmailAuthError(f"Gmail did not return an ID after creating label {label_name!r}.")
+        return created_id
+
+    def modify_message_labels(
+        self,
+        message_id: str,
+        add_label_ids: list[str] | None = None,
+        remove_label_ids: list[str] | None = None,
+    ) -> dict:
+        return self.request_json(
+            "POST",
+            f"/messages/{message_id}/modify",
+            payload={
+                "addLabelIds": add_label_ids or [],
+                "removeLabelIds": remove_label_ids or [],
+            },
+        )
 
 
 def _expiry_from_response(payload: dict) -> str | None:

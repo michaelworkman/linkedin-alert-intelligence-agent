@@ -38,6 +38,8 @@ class GmailApiMessageSource:
         query: str,
         label_names: list[str] | None = None,
         label_ids: list[str] | None = None,
+        processed_label_name: str = "",
+        create_processed_label: bool = True,
         max_results: int = 25,
         mark_read: bool = False,
     ) -> None:
@@ -45,16 +47,20 @@ class GmailApiMessageSource:
         self.query = query
         self.label_names = label_names or []
         self.label_ids = label_ids or []
+        self.processed_label_name = processed_label_name.strip()
+        self.create_processed_label = create_processed_label
         self.max_results = max_results
         self.mark_read = mark_read
+        self._processed_label_id: str | None = None
 
     def iter_messages(self) -> list[SourceMessage]:
         resolved_label_ids = self.client.resolve_label_ids(self.label_names, self.label_ids)
+        query = self._with_processed_label_exclusion(self.query)
         listing = self.client.request_json(
             "GET",
             "/messages",
             params={
-                "q": self.query,
+                "q": query,
                 "labelIds": resolved_label_ids,
                 "maxResults": self.max_results,
             },
@@ -81,10 +87,37 @@ class GmailApiMessageSource:
         return results
 
     def mark_processed(self, message_id: str) -> None:
-        if not self.mark_read:
+        add_label_ids: list[str] = []
+        remove_label_ids: list[str] = []
+
+        if self.processed_label_name:
+            add_label_ids.append(self._resolve_processed_label_id())
+        if self.mark_read:
+            remove_label_ids.append("UNREAD")
+
+        if not add_label_ids and not remove_label_ids:
             return
-        self.client.request_json(
-            "POST",
-            f"/messages/{message_id}/modify",
-            payload={"removeLabelIds": ["UNREAD"]},
+        self.client.modify_message_labels(
+            message_id,
+            add_label_ids=add_label_ids,
+            remove_label_ids=remove_label_ids,
         )
+
+    def _resolve_processed_label_id(self) -> str:
+        if self._processed_label_id:
+            return self._processed_label_id
+        if self.create_processed_label:
+            self._processed_label_id = self.client.ensure_label_id(self.processed_label_name)
+        else:
+            resolved = self.client.resolve_label_ids([self.processed_label_name], [])
+            if not resolved:
+                raise ValueError(f"Could not resolve Gmail processed label {self.processed_label_name!r}.")
+            self._processed_label_id = resolved[0]
+        return self._processed_label_id
+
+    def _with_processed_label_exclusion(self, query: str) -> str:
+        if not self.processed_label_name:
+            return query
+        escaped_label = self.processed_label_name.replace('"', '\\"')
+        exclusion = f'-label:"{escaped_label}"'
+        return f"{query} {exclusion}".strip()
