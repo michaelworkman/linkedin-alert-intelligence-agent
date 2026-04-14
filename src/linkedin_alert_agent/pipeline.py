@@ -114,7 +114,7 @@ def run_pipeline(config: Config, dry_run: bool = False) -> RunSummary:
     completed_message_ids: list[str] = []
 
     try:
-        with storage.transaction():
+        with storage.transaction(commit=not dry_run):
             for message in source.iter_messages():
                 if storage.has_processed_alert(message.message_id):
                     continue

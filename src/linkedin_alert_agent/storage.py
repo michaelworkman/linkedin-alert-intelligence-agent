@@ -94,7 +94,7 @@ class Storage:
             self.connection.commit()
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, commit: bool = True):
         previous_auto_commit = self.auto_commit
         self.auto_commit = False
         self.connection.execute("BEGIN")
@@ -104,7 +104,10 @@ class Storage:
             self.connection.rollback()
             raise
         else:
-            self.connection.commit()
+            if commit:
+                self.connection.commit()
+            else:
+                self.connection.rollback()
         finally:
             self.auto_commit = previous_auto_commit
 
