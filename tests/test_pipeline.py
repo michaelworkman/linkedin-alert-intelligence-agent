@@ -5,9 +5,12 @@ import tempfile
 import unittest
 from email.message import EmailMessage
 from pathlib import Path
+from unittest.mock import patch
 
 from linkedin_alert_agent.config import Config
+from linkedin_alert_agent.models import SourceMessage
 from linkedin_alert_agent.pipeline import rebuild_latest_digest, run_pipeline
+from linkedin_alert_agent.storage import Storage
 
 
 def build_email(message_id: str, subject: str, html: str) -> bytes:
@@ -154,8 +157,10 @@ class PipelineTests(unittest.TestCase):
                 failed_dir=output_dir / "failed",
                 profile_path=profile_path,
                 gmail_token_path=root / "secrets" / "google-token.json",
+                digest_to_email="user@example.com",
             )
-            run_pipeline(config, dry_run=True)
+            with patch("linkedin_alert_agent.pipeline.send_html_email", return_value="2026-03-17T12:00:00+00:00"):
+                run_pipeline(config, dry_run=False)
 
             profile_path.write_text(
                 json.dumps(
@@ -175,6 +180,105 @@ class PipelineTests(unittest.TestCase):
             summary = rebuild_latest_digest(config, send_email=False)
             digest_html = summary.digest_path.read_text(encoding="utf-8")
             self.assertIn("Top matches", digest_html)
+
+    def test_pipeline_rolls_back_state_when_delivery_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_dir = root / "output"
+            output_dir.mkdir()
+
+            profile_path = root / "profile.json"
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "target_titles": ["Creative Director"],
+                        "target_locations": ["Boston, MA"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            message = SourceMessage(
+                message_id="message-1",
+                raw_bytes=build_email("message-1", "Jobs alert for Design Leadership", EMAIL_ONE),
+            )
+
+            class RecordingSource:
+                def __init__(self, source_message: SourceMessage) -> None:
+                    self.source_message = source_message
+                    self.marked: list[str] = []
+
+                def iter_messages(self) -> list[SourceMessage]:
+                    return [self.source_message]
+
+                def mark_processed(self, message_id: str) -> None:
+                    self.marked.append(message_id)
+
+            source = RecordingSource(message)
+            config = Config(
+                source_mode="gmail",
+                database_path=root / "alerts.sqlite3",
+                output_dir=output_dir,
+                failed_dir=output_dir / "failed",
+                profile_path=profile_path,
+                gmail_token_path=root / "secrets" / "google-token.json",
+                digest_to_email="michael@example.com",
+            )
+
+            with patch("linkedin_alert_agent.pipeline._build_source", return_value=source):
+                with patch("linkedin_alert_agent.pipeline.send_html_email", side_effect=RuntimeError("send failed")):
+                    with self.assertRaises(RuntimeError):
+                        run_pipeline(config, dry_run=False)
+
+            storage = Storage(config.database_path)
+            try:
+                self.assertFalse(storage.has_processed_alert("message-1"))
+                self.assertIsNone(storage.latest_digest())
+            finally:
+                storage.close()
+            self.assertEqual(source.marked, [])
+
+    def test_dry_run_does_not_persist_alert_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_dir = root / "input"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+
+            (input_dir / "alert-1.eml").write_bytes(build_email("message-1", "Jobs alert for Design Leadership", EMAIL_ONE))
+
+            profile_path = root / "profile.json"
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "target_titles": ["Creative Director"],
+                        "target_locations": ["Boston, MA"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = Config(
+                source_mode="filesystem",
+                filesystem_input_dir=input_dir,
+                database_path=root / "alerts.sqlite3",
+                output_dir=output_dir,
+                failed_dir=output_dir / "failed",
+                profile_path=profile_path,
+                gmail_token_path=root / "secrets" / "google-token.json",
+            )
+
+            summary = run_pipeline(config, dry_run=True)
+            self.assertEqual(summary.processed_messages, 1)
+            self.assertTrue(summary.digest_path.exists())
+
+            storage = Storage(config.database_path)
+            try:
+                self.assertFalse(storage.has_processed_alert("message-1"))
+                self.assertIsNone(storage.latest_digest())
+            finally:
+                storage.close()
 
 
 if __name__ == "__main__":

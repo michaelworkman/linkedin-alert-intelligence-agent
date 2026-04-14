@@ -7,6 +7,7 @@ This is a Python MVP for turning LinkedIn job alert emails into one ranked daily
 - Filesystem intake for `.eml` files so the pipeline is runnable locally right now.
 - Local Gmail OAuth flow with refresh-token persistence for repeatable daily runs.
 - Gmail API intake using either the saved OAuth token or a one-off bearer token fallback.
+- Optional Gmail checkpointing with a processed label when you grant `gmail.modify`.
 - Email parsing for LinkedIn alert HTML/text into structured job records.
 - Normalization for titles, locations, work mode hints, and canonical job URLs.
 - SQLite persistence for alerts, jobs, scores, and digests.
@@ -75,6 +76,7 @@ When you are ready to email the digest, set the SMTP variables from [.env.exampl
 7. Run the pipeline with `SOURCE_MODE=gmail`.
 
 If you want the pipeline to mark processed Gmail messages read, set `GMAIL_MARK_READ=true` and re-run `gmail-auth` so the saved token includes `gmail.modify`.
+If you also want Gmail-side checkpointing, set `GMAIL_PROCESSED_LABEL_NAME='LinkedIn Digest Processed'` and re-run `gmail-auth --allow-modify` so the saved token includes `gmail.modify`.
 
 ## Output
 
@@ -108,7 +110,9 @@ What it does:
 
 - runs every weekday at 7:00 AM Eastern
 - also supports a manual "Run workflow" test from GitHub
-- restores the SQLite history file so dedupe and seen-history carry forward between runs
+- restores the SQLite history file from a dedicated `linkedin-digest-state` branch
+- validates the saved Gmail token before processing so missing send scope fails fast
+- persists the SQLite history back to that state branch after a successful run
 - uploads the rendered digest HTML as a workflow artifact after each run
 
 Before you enable it, push this repo to GitHub and add these repository secrets:
@@ -119,6 +123,7 @@ Before you enable it, push this repo to GitHub and add these repository secrets:
   Paste the full contents of your local [secrets/google-oauth-client.json](/Users/michaelworkman/Desktop/LinkedIn%20job%20search/secrets/google-oauth-client.json)
 - `GMAIL_TOKEN_JSON`
   Paste the full contents of your local [secrets/google-token.json](/Users/michaelworkman/Desktop/LinkedIn%20job%20search/secrets/google-token.json)
+  This token should include `gmail.readonly` plus `gmail.send`. Add `gmail.modify` only if you later enable message-state changes such as Gmail-side checkpoint labels or marking messages read.
 - `OPENAI_API_KEY`
   Optional. Add this only if you want the optional AI rationale refinement in GitHub too.
 
@@ -128,9 +133,10 @@ After those secrets are added:
 2. Open the `Actions` tab in GitHub.
 3. Open `Weekday LinkedIn Digest`.
 4. Click `Run workflow` once for a live test.
-5. Leave the workflow enabled for weekday 7:00 AM runs.
+5. Confirm the run creates or updates the `linkedin-digest-state` branch.
+6. Leave the workflow enabled for weekday 7:00 AM runs.
 
-One practical note: the workflow keeps the SQLite history in the GitHub Actions cache so dedupe can persist between runs. If that cache is ever cleared by GitHub, the agent will still work, but it will temporarily lose seen-history until it builds the database back up again.
+The workflow no longer relies on the GitHub Actions cache for history. The dedicated `linkedin-digest-state` branch is the durable checkpoint for the SQLite state. Gmail-side processed labels remain available as an optional extra layer if you later decide to grant `gmail.modify`.
 
 ## Tests
 

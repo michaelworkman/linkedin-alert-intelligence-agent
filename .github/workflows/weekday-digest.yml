@@ -6,9 +6,12 @@ on:
     - cron: "0 11 * * 1-5"
     - cron: "0 12 * * 1-5"
 
+concurrency:
+  group: weekday-linkedin-digest
+  cancel-in-progress: false
+
 permissions:
-  contents: read
-  actions: write
+  contents: write
 
 jobs:
   send-digest:
@@ -22,6 +25,7 @@ jobs:
       GMAIL_QUERY: "from:(jobalerts-noreply@linkedin.com OR jobs-noreply@linkedin.com) newer_than:2d"
       GMAIL_MAX_RESULTS: "100"
       GMAIL_MARK_READ: "false"
+      STATE_BRANCH: linkedin-digest-state
       GMAIL_CLIENT_SECRETS_PATH: secrets/google-oauth-client.json
       GMAIL_TOKEN_PATH: secrets/google-token.json
       DATABASE_PATH: data/linkedin_alerts.sqlite3
@@ -57,6 +61,8 @@ jobs:
       - name: Checkout repository
         if: steps.schedule.outputs.run_now == 'true'
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         if: steps.schedule.outputs.run_now == 'true'
@@ -75,14 +81,10 @@ jobs:
           [ -n "$GMAIL_CLIENT_SECRETS_JSON" ] || { echo "::error::Missing GitHub secret GMAIL_CLIENT_SECRETS_JSON"; exit 1; }
           [ -n "$GMAIL_TOKEN_JSON" ] || { echo "::error::Missing GitHub secret GMAIL_TOKEN_JSON"; exit 1; }
 
-      - name: Restore digest state
+      - name: Restore durable digest state
         if: steps.schedule.outputs.run_now == 'true'
-        uses: actions/cache/restore@v5
-        with:
-          path: data/linkedin_alerts.sqlite3
-          key: linkedin-alert-state-${{ github.run_id }}
-          restore-keys: |
-            linkedin-alert-state-
+        shell: bash
+        run: bash scripts/sync_github_state_branch.sh restore
 
       - name: Install app
         if: steps.schedule.outputs.run_now == 'true'
@@ -102,10 +104,39 @@ jobs:
           printf '%s' "$GMAIL_CLIENT_SECRETS_JSON" > "$GMAIL_CLIENT_SECRETS_PATH"
           printf '%s' "$GMAIL_TOKEN_JSON" > "$GMAIL_TOKEN_PATH"
 
+      - name: Validate Gmail token scopes
+        if: steps.schedule.outputs.run_now == 'true'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from linkedin_alert_agent.config import Config
+          from linkedin_alert_agent.gmail import GoogleOAuthManager, load_google_client_config
+          from linkedin_alert_agent.settings import apply_user_settings, load_user_settings
+
+          config = Config.from_env()
+          config = apply_user_settings(config, load_user_settings(config.settings_path))
+          oauth_manager = GoogleOAuthManager(
+              client_config=load_google_client_config(
+                  client_id=config.gmail_client_id,
+                  client_secret=config.gmail_client_secret,
+                  redirect_uri=config.gmail_redirect_uri,
+                  client_secrets_path=config.gmail_client_secrets_path,
+              ),
+              token_path=config.gmail_token_path,
+          )
+          token = oauth_manager.get_token(config.gmail_delivery_scopes)
+          print("Validated Gmail token scopes:", " ".join(token.scopes))
+          PY
+
       - name: Send weekday digest
         if: steps.schedule.outputs.run_now == 'true'
         shell: bash
         run: python -m linkedin_alert_agent run
+
+      - name: Persist durable digest state
+        if: steps.schedule.outputs.run_now == 'true' && success()
+        shell: bash
+        run: bash scripts/sync_github_state_branch.sh persist
 
       - name: Upload digest artifact
         if: steps.schedule.outputs.run_now == 'true' && always()
@@ -114,12 +145,6 @@ jobs:
           name: linkedin-digest-${{ github.run_id }}
           path: |
             output/linkedin-digest-*.html
+            data/linkedin_alerts.sqlite3
             output/failed/**
           if-no-files-found: ignore
-
-      - name: Save digest state
-        if: steps.schedule.outputs.run_now == 'true' && always()
-        uses: actions/cache/save@v5
-        with:
-          path: data/linkedin_alerts.sqlite3
-          key: linkedin-alert-state-${{ github.run_id }}

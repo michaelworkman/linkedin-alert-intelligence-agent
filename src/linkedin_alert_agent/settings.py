@@ -105,6 +105,7 @@ def render_status(config: Config) -> str:
             f"- Source mailbox: {settings.source_mode}",
             f"- Gmail authorization saved: {gmail_ready}",
             f"- Gmail label: {label_name}",
+            f"- Processed checkpoint label: {config.gmail_processed_label_name or 'disabled'}",
             f"- Daily digest recipient: {digest_recipient}",
             f"- Daily send time: {settings.daily_send_time} {settings.timezone_name}",
             f"- Mark processed emails read: {'yes' if settings.gmail_mark_read else 'no'}",

@@ -52,6 +52,8 @@ def _build_source(config: Config):
             query=config.gmail_query,
             label_names=config.gmail_label_names,
             label_ids=config.gmail_label_ids,
+            processed_label_name=config.gmail_processed_label_name,
+            create_processed_label=config.gmail_create_processed_label,
             max_results=config.gmail_max_results,
             mark_read=config.gmail_mark_read,
         )
@@ -109,51 +111,56 @@ def run_pipeline(config: Config, dry_run: bool = False) -> RunSummary:
     parsed_jobs = 0
     duplicates_removed = 0
     new_entries: list[tuple[int, JobRecord, ScoreBreakdown]] = []
+    completed_message_ids: list[str] = []
 
     try:
-        for message in source.iter_messages():
-            if storage.has_processed_alert(message.message_id):
-                continue
-            processed_messages += 1
-            try:
-                alert = parse_alert_email(
-                    message.raw_bytes,
-                    source_message_id=message.message_id,
-                    received_at=message.received_at,
-                )
-            except Exception:
-                failed_path = config.failed_dir / f"{message.message_id}.eml"
-                failed_path.write_bytes(message.raw_bytes)
-                (config.failed_dir / f"{message.message_id}.log").write_text(traceback.format_exc(), encoding="utf-8")
-                continue
+        with storage.transaction(commit=not dry_run):
+            for message in source.iter_messages():
+                if storage.has_processed_alert(message.message_id):
+                    continue
+                processed_messages += 1
+                try:
+                    alert = parse_alert_email(
+                        message.raw_bytes,
+                        source_message_id=message.message_id,
+                        received_at=message.received_at,
+                    )
+                except Exception:
+                    failed_path = config.failed_dir / f"{message.message_id}.eml"
+                    failed_path.write_bytes(message.raw_bytes)
+                    (config.failed_dir / f"{message.message_id}.log").write_text(traceback.format_exc(), encoding="utf-8")
+                    continue
 
-            alert_id = storage.create_alert(alert.message_id, alert.alert_name, alert.received_at)
-            parsed_jobs += len(alert.jobs)
-            for job in alert.jobs:
-                job_id, is_new = storage.upsert_job(job, alert.received_at)
-                storage.link_job_to_alert(job_id, alert_id)
-                if is_new:
-                    score = scorer.score(job)
-                    score = _maybe_refine_with_ai(reasoner, job, score, profile, scorer)
-                    storage.save_score(job_id, score)
-                    new_entries.append((job_id, job, score))
-                else:
-                    duplicates_removed += 1
-            if not dry_run:
-                source.mark_processed(message.message_id)
+                alert_id = storage.create_alert(alert.message_id, alert.alert_name, alert.received_at)
+                parsed_jobs += len(alert.jobs)
+                for job in alert.jobs:
+                    job_id, is_new = storage.upsert_job(job, alert.received_at)
+                    storage.link_job_to_alert(job_id, alert_id)
+                    if is_new:
+                        score = scorer.score(job)
+                        score = _maybe_refine_with_ai(reasoner, job, score, profile, scorer)
+                        storage.save_score(job_id, score)
+                        new_entries.append((job_id, job, score))
+                    else:
+                        duplicates_removed += 1
+                completed_message_ids.append(message.message_id)
 
-        new_entries.sort(key=lambda item: item[2].total, reverse=True)
-        subject, html = render_digest_html(run_day, new_entries, duplicates_removed)
-        digest_path = config.output_dir / f"linkedin-digest-{run_day.isoformat()}.html"
-        digest_path.write_text(html, encoding="utf-8")
-        email_sent_at = None if dry_run else send_html_email(config, subject, html)
-        storage.save_digest(
-            run_date=run_day.isoformat(),
-            job_ids=[job_id for job_id, _, _ in new_entries],
-            email_subject=subject,
-            html_path=str(digest_path),
-            email_sent_at=email_sent_at,
-        )
+            new_entries.sort(key=lambda item: item[2].total, reverse=True)
+            subject, html = render_digest_html(run_day, new_entries, duplicates_removed)
+            digest_path = config.output_dir / f"linkedin-digest-{run_day.isoformat()}.html"
+            digest_path.write_text(html, encoding="utf-8")
+            email_sent_at = None if dry_run else send_html_email(config, subject, html)
+            storage.save_digest(
+                run_date=run_day.isoformat(),
+                job_ids=[job_id for job_id, _, _ in new_entries],
+                email_subject=subject,
+                html_path=str(digest_path),
+                email_sent_at=email_sent_at,
+            )
+
+        if not dry_run:
+            for message_id in completed_message_ids:
+                source.mark_processed(message_id)
         return RunSummary(
             run_date=run_day.isoformat(),
             processed_messages=processed_messages,

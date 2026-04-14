@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +15,7 @@ class Storage:
         self.database_path = database_path
         self.connection = sqlite3.connect(database_path)
         self.connection.row_factory = sqlite3.Row
+        self.auto_commit = True
         self.initialize()
 
     def close(self) -> None:
@@ -87,6 +89,28 @@ class Storage:
         )
         self.connection.commit()
 
+    def _commit(self) -> None:
+        if self.auto_commit:
+            self.connection.commit()
+
+    @contextmanager
+    def transaction(self, commit: bool = True):
+        previous_auto_commit = self.auto_commit
+        self.auto_commit = False
+        self.connection.execute("BEGIN")
+        try:
+            yield
+        except Exception:
+            self.connection.rollback()
+            raise
+        else:
+            if commit:
+                self.connection.commit()
+            else:
+                self.connection.rollback()
+        finally:
+            self.auto_commit = previous_auto_commit
+
     def has_processed_alert(self, source_message_id: str) -> bool:
         cursor = self.connection.execute(
             "SELECT 1 FROM alerts WHERE source_message_id = ? LIMIT 1",
@@ -106,7 +130,7 @@ class Storage:
             "SELECT id FROM alerts WHERE source_message_id = ?",
             (source_message_id,),
         ).fetchone()
-        self.connection.commit()
+        self._commit()
         if row is None:
             raise RuntimeError(f"Unable to create alert row for {source_message_id}")
         return int(row["id"])
@@ -154,7 +178,7 @@ class Storage:
                     int(existing["id"]),
                 ),
             )
-            self.connection.commit()
+            self._commit()
             return int(existing["id"]), False
 
         cursor = self.connection.execute(
@@ -195,7 +219,7 @@ class Storage:
                 job.duplicate_key,
             ),
         )
-        self.connection.commit()
+        self._commit()
         return int(cursor.lastrowid), True
 
     def link_job_to_alert(self, job_id: int, alert_id: int) -> None:
@@ -206,7 +230,7 @@ class Storage:
             """,
             (alert_id, job_id),
         )
-        self.connection.commit()
+        self._commit()
 
     def save_score(self, job_id: int, score: ScoreBreakdown) -> None:
         self.connection.execute(
@@ -259,7 +283,7 @@ class Storage:
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
-        self.connection.commit()
+        self._commit()
 
     def save_digest(
         self,
@@ -281,7 +305,7 @@ class Storage:
             """,
             (run_date, json.dumps(job_ids), email_subject, html_path, email_sent_at),
         )
-        self.connection.commit()
+        self._commit()
 
     def latest_digest(self) -> sqlite3.Row | None:
         return self.connection.execute(
